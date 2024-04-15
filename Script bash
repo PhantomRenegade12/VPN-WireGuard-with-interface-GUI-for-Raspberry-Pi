@@ -1,0 +1,154 @@
+#!/bin/bash
+
+# Fonctions pour les couleurs
+
+color_reset='\e[0m'        # Réinitialisation de la couleur
+color_yellow='\e[1;33m'    # Texte jaune en gras
+color_cyan='\e[1;36m'      # Texte cyan en gras
+color_red='\e[1;31m'       # Texte rouge en gras
+color_green='\e[0;32m'     # Texte vert en gras
+
+# EasyFormer
+
+echo " #              ############################################################################### "
+echo " #    /___/     # Installation de votre VPN personnel"
+echo " #    (O,O)     # Utilité: Installation de votre tunnel WireGuard et de son interface graphique"
+echo " #   /(   )\    # Usage: Déploipement d'un serveur WireGuard sur un Raspberry Pi"
+echo " # --==M=M==--  # Auteurs: Poulade Samuel <poulade.samuel@protonmail.com> "
+echo " #    Easy      # Mise à jour le: 25/03/2024 "
+echo " # F O R M E R  ############################################################################### "
+
+sleep 5
+
+# Obtenir l' adresse IP WAN du Raspberry pi
+
+ip_wan=$(curl -4 -s ifconfig.me)
+
+# Obtenir l' adresse IP LAN du Raspberry pi
+
+ip_lan=$(ifconfig eth0 | awk '/inet / {print $2}' | cut -d':' -f2)
+
+# Achiffage le tableau des adresses IPs LAN et WAN 
+
+print_separator() {
+    printf "+--------------------------------------------------------+\n"
+}
+# Afficher le tableau
+
+print_separator
+printf "|   ${color_yellow}Adresses IP LAN and WAN${color_reset}                              |\n"
+print_separator
+printf "|   Votre ip publique est ${color_green}$ip_wan${color_reset}                   |\n"
+printf "|   Votre ip privée est ${color_green}$ip_lan${color_reset}                    |\n"  
+print_separator
+
+sleep 10
+
+# Définir l'adresse IP du serveur à pinguer (Google DNS)
+server="google.fr"
+
+# Fonction pour afficher un message d'erreur et quitter le script
+function afficher_erreur() {
+    echo -e ${color_red}"Erreur : Connexion Internet indisponible.${color_reset}"
+    exit 1
+}
+
+# Test de ping serveur
+ping -c 4 $server > /dev/null 2>&1
+
+# Vérifie le code de retour de la commande ping
+if [ $? -eq 0 ]; then
+    echo "La connexion Internet est disponible." 
+else
+    afficher_erreur
+fi
+
+# Vérifiez si l'adresse IP n'est pas vide
+
+if [ -n "$ip_lan" ]; then
+    echo -e " "
+else
+    echo -e "${color_red}Impossible de récupérer l'adresse IP de eth0${color_reset}"
+fi
+echo -e "${color_yellow}Configuration du tunnel VPN WireGuard${color_reset}"
+
+# Définir les variables VPN WireGuard
+
+WG_IPV4_ADDR="10.6.0.1"
+WG_IPV4_NETMASK="24"
+WG_PORT="51820"
+WG_DNS1="1.1.1.1"
+WG_DNS2="8.8.8.8"
+
+echo -e "${color_cyan}Le fichier options.conf a été créé avec succès.${color_reset}"
+
+# Créer le fichier options.conf
+cat <<EOL > options.conf
+# options.conf for WireGuard
+WG_IPV4_ADDR=$WG_IPV4_ADDR
+WG_IPV4_NETMASK=$WG_IPV4_NETMASK
+WG_PORT=$WG_PORT
+WG_DNS1=$WG_DNS1
+WG_DNS2=$WG_DNS2
+EOL
+
+
+sleep 3
+# Mise à jour de votre Raspberry Pi
+release_file=/etc/os-relase
+
+if grep -q "Debian" $release_file
+then
+    sudo apt -y update
+    sudo apt -y upgrade
+fi
+
+# Installation de Docker
+
+echo -e "${color_yellow}Installation de Docker sur votre Raspberry Pi${Color_reset}"
+sudo apt update
+sudo apt -y install apt-transport-https ca-certificates curl gnupg2 software-properties-common
+curl -fsSL https://download.docker.com/linux/debian/gpg | sudo apt-key add -
+sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/debian $(lsb_release -cs) stable"
+sudo apt update
+apt-cache policy docker-ce
+sudo apt -y install docker-ce
+sudo usermod -aG docker $(whoami)
+
+# Rechercher des erreurs dans l'installation de Docker
+
+if [ $? -ne 0 ]; then
+    echo -e "${color_yellow}Erreur : l'installation de Docker a échoué${color_reset}"
+    exit 1
+fi
+
+# Installation de Pi_VPN WireGuard
+
+curl -L https://install.pivpn.io > install.sh
+chmod +x install.sh
+./install.sh --unattended options.conf
+
+# Installation de WireGuard + UI
+
+echo -e "${color_yellow}Configuration l'interface graphique de PiVPN Web.${color_reset}"
+
+sleep 4
+
+echo -e "${color_cyan}Vos identifiants de PiVPN Web sont les même que pour se connecter sur votre Raspberry Pi.${color_reset}"
+
+
+docker run -d \
+  --name=pivpn-web \
+  -e WG_HOST=$ip_lan \
+  -v ~/.pivpn-web:/etc/wireguard \
+  -p 51821:51821/tcp \
+  --cap-add=NET_ADMIN \
+  --cap-add=SYS_MODULE \
+  --sysctl="net.ipv4.conf.all.src_valid_mark=1" \
+  --sysctl="net.ipv4.ip_forward=1" \
+  --restart unless-stopped \
+  weejewel/pivpn-web
+
+  echo -e "${color_yellow}L'installation de votre tunnel VPN WireGuard et l'interface PiVPN Web est terminée.${color_reset}"
+  echo -e "${color_cyan}L'interface utilisateur Web sera désormais disponible sur http://$ip_lan:51821${color_reset}"
+  
